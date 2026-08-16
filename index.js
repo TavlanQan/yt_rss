@@ -7,7 +7,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5005;
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const CACHE_TTL_MS = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000; // 5 минут
 
