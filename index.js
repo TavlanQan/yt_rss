@@ -21,7 +21,7 @@ const cache = new Map();
  * Поддерживает:
  *   - https://www.youtube.com/channel/UCxxxx
  *   - https://www.youtube.com/c/name (требуется доп. запрос)
- *   - https://www.youtube.com/@handle
+ *   - https://www.youtube.com/@handle (через forHandle)
  *   - прямые ID
  */
 async function extractChannelId(input) {
@@ -49,11 +49,10 @@ async function extractChannelId(input) {
   const channelMatch = path.match(/^\/channel\/(UC[\w-]{22})/);
   if (channelMatch) return channelMatch[1];
 
-  // /c/name или /@handle – требуется поиск через API
-  const handleMatch = path.match(/^\/(?:c|@)\/(.+)/);
-  if (handleMatch) {
-    const identifier = handleMatch[1];
-    // Поиск канала по имени (для каналов с пользовательским URL)
+  // /c/name (старый стиль) — требуется поиск
+  const cMatch = path.match(/^\/c\/(.+)/);
+  if (cMatch) {
+    const identifier = cMatch[1];
     const searchUrl = 'https://www.googleapis.com/youtube/v3/search';
     const response = await axios.get(searchUrl, {
       params: {
@@ -64,12 +63,30 @@ async function extractChannelId(input) {
         key: YOUTUBE_API_KEY,
       },
     });
-
     const items = response.data.items;
     if (!items || items.length === 0) {
       throw new Error('Канал не найден');
     }
     return items[0].snippet.channelId;
+  }
+
+  // /@handle — используем channels.list с параметром forHandle
+  const handleMatch = path.match(/^\/@(.+)/);
+  if (handleMatch) {
+    const handle = handleMatch[1];
+    const channelUrl = 'https://www.googleapis.com/youtube/v3/channels';
+    const response = await axios.get(channelUrl, {
+      params: {
+        part: 'id',
+        forHandle: handle,
+        key: YOUTUBE_API_KEY,
+      },
+    });
+    const items = response.data.items;
+    if (!items || items.length === 0) {
+      throw new Error('Канал не найден по хэндлу');
+    }
+    return items[0].id;
   }
 
   // Если это ссылка на видео (youtu.be/... или watch?v=...) – пытаемся взять канал из видео
@@ -105,7 +122,7 @@ async function fetchVideos(channelId) {
       part: 'snippet',
       channelId,
       order: 'date',
-      maxResults: 20, // можно настроить
+      maxResults: 20,
       type: 'video',
       key: YOUTUBE_API_KEY,
     },
@@ -125,7 +142,7 @@ function generateRSS(channelId, videos, channelTitle) {
     site_url: `https://www.youtube.com/channel/${channelId}`,
     language: 'ru',
     pubDate: new Date(),
-    ttl: 60, // минуты
+    ttl: 60,
   });
 
   videos.forEach(video => {
@@ -142,7 +159,6 @@ function generateRSS(channelId, videos, channelTitle) {
       url: link,
       guid: videoId,
       date: pubDate,
-      // Можно добавить энклоузер (thumbnail) – опционально
     });
   });
 
@@ -170,7 +186,7 @@ app.get('/rss', async (req, res) => {
       }
     }
 
-    // 2. Извлечение channelId (если передан URL)
+    // 2. Извлечение channelId
     let channelId;
     try {
       channelId = await extractChannelId(channel);
