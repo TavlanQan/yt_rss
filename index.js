@@ -184,7 +184,7 @@ async function fetchVideos(uploadsPlaylistId, channelId) {
 
 function generateRSS(channelId, videos, channelTitle) {
   const feed = new RSS({
-    title: `YouTube: ${channelTitle || channelId}`,
+    title: channelTitle || channelId,
     description: `Последние видео с канала ${channelTitle || channelId}`,
     feed_url: `http://localhost:${PORT}/rss?channel=${channelId}`,
     site_url: `https://www.youtube.com/channel/${channelId}`,
