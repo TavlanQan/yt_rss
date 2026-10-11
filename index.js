@@ -70,7 +70,9 @@ async function resolveChannel(input) {
     });
     const items = response.data.items;
     if (!items || items.length === 0) {
-      throw new Error('Канал не найден по хэндлу');
+      const err = new Error('Канал не найден по хэндлу');
+      err.status = 404;
+      throw err;
     }
     return {
       channelId: items[0].id,
@@ -96,7 +98,9 @@ async function resolveChannel(input) {
     });
     const items = response.data.items;
     if (!items || items.length === 0) {
-      throw new Error('Канал не найден');
+      const err = new Error('Канал не найден');
+      err.status = 404;
+      throw err;
     }
     return fetchChannelDetails(items[0].snippet.channelId);
   }
@@ -133,7 +137,10 @@ async function fetchChannelDetails(channelId) {
   });
   const items = response.data.items;
   if (!items || items.length === 0) {
-    throw new Error('Канал не найден');
+    // 404 = постоянная ошибка (канал удалён), не путать с transient 5xx.
+    const err = new Error('Канал не найден');
+    err.status = 404;
+    throw err;
   }
   return {
     channelId: items[0].id,
@@ -231,6 +238,9 @@ app.get('/rss', async (req, res) => {
         resolved = { ...info, timestamp: Date.now() };
         resolveCache.set(channel, resolved);
       } catch (err) {
+        if (err.status === 404) {
+          return res.status(404).send(`Канал не найден: ${err.message}`);
+        }
         return res.status(400).send(`Ошибка определения канала: ${err.message}`);
       }
     }
@@ -252,12 +262,32 @@ app.get('/rss', async (req, res) => {
       const status = err.response?.status;
       console.error('YouTube API error:', status || '', err.message);
 
-      // Fallback на stale cache, если он есть — лучше отдать устаревший RSS,
-      // чем 500, потому что бот не может отличить «микросервис умер» от
-      // «канал пустой» и повторяет запросы, усугубляя ситуацию.
+      // 404 от YouTube = канал/playlist удалён. Это НЕ transient — stale
+      // отдавать нельзя, иначе замаскируем смерть канала. Инвалидируем
+      // оба кеша, чтобы следующий запрос заново прошёл resolve и явно
+      // вернул 404 — вместо 24ч слепой зоны на устаревшем снимке.
+      if (status === 404) {
+        rssCache.delete(channelId);
+        resolveCache.delete(channel);
+        return res.status(404).send('Канал не найден на YouTube');
+      }
+
+      // Transient (5xx/сеть/rate-limit) — можно отдать stale, но не старше
+      // суток. Старше — снимок доверия не заслуживает.
+      const STALE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
       if (cached) {
-        console.log(`[STALE] YouTube API error, returning stale cache for ${channelId}`);
-        return res.type('application/rss+xml').send(cached.data);
+        const ageMs = Date.now() - cached.timestamp;
+        if (ageMs < STALE_MAX_AGE_MS) {
+          console.log(
+            `[STALE] age=${Math.round(ageMs / 1000)}s, returning for ${channelId}`
+          );
+          return res.type('application/rss+xml').send(cached.data);
+        }
+        console.log(
+          `[STALE-EXPIRED] age=${Math.round(ageMs / 1000)}s > ` +
+            `${Math.round(STALE_MAX_AGE_MS / 1000)}s, refusing for ${channelId}`
+        );
+        rssCache.delete(channelId);
       }
 
       if (status === 429) {
