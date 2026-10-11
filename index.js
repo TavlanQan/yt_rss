@@ -68,12 +68,15 @@ async function resolveChannel(input) {
         key: YOUTUBE_API_KEY,
       },
     });
-    const items = response.data.items;
-    if (!items || items.length === 0) {
-      throw new Error('Канал не найден по хэндлу');
-    }
-    return {
-      channelId: items[0].id,
+  const items = response.data.items;
+  if (!items || items.length === 0) {
+    // 404 = постоянная ошибка (канал удалён), не путать с transient 5xx.
+    const err = new Error('Канал не найден');
+    err.status = 404;
+    throw err;
+  }
+  return {
+    channelId: items[0].id,
       uploadsPlaylistId: items[0].contentDetails?.relatedPlaylists?.uploads || null,
       channelTitle: items[0].snippet?.title || null,
     };
